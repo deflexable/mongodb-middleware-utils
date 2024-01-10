@@ -1,0 +1,21 @@
+{
+  "name": "mongodb-hack-middleware",
+  "version": "1.0.0",
+  "description": "Mongodb middleware for custom fulltext search, getting exact count of random documents and more..",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mongodb",
+    "mongodb-fulltext-search",
+    "self-hosted-search",
+    "middleware",
+    "query"
+  ],
+  "author": "Anthony Onabanjo (https://github.com/deflexable)",
+  "license": "MIT",
+  "dependencies": {
+    "@types/mongodb": "^4.0.7"
+  }
+}
