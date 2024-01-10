@@ -444,7 +444,7 @@ const runBackgroundThread = (script, args) => new Promise(resolve => {
     worker.postMessage(args);
 });
 
-const chunkSize = 9 * 200; // max words
+const chunkSize = 9 * 300; // max words
 const chunkBreakPoint = 20000; // max chars
 
 const chunkifyText = (t = '') => {

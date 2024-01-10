@@ -1,6 +1,6 @@
-# mongodb-hack-middleware
+# mongodb-middleware-utils
 
-mongodb-hack-middleware provides a comprehensive solution for enhancing MongoDB collections with full-text indexing capabilities and offers a convenient way to retrieve random documents. Whether you're building a search-intensive application or need a way to fetch diverse data for testing locally or on-premise, this streamlines these processes for MongoDB users using the [community version](https://www.mongodb.com/try/download/community)
+mongodb-middleware-utils provides a comprehensive solution for enhancing MongoDB collections with full-text indexing capabilities and offers a convenient way to retrieve random documents. Whether you're building a search-intensive application or need a way to fetch diverse data for testing locally or on-premise, this streamlines these processes for MongoDB users using the [community version](https://www.mongodb.com/try/download/community)
 
 ## Key Advantages
 
@@ -11,13 +11,13 @@ mongodb-hack-middleware provides a comprehensive solution for enhancing MongoDB 
 ## Installation
 
 ```sh
-npm install mongodb-hack-middleware
+npm install mongodb-middleware-utils
 ```
 
 or using yarn
 
 ```sh
-yarn add mongodb-hack-middleware
+yarn add mongodb-middleware-utils
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ yarn add mongodb-hack-middleware
 ### initialize MongoClientHack or proxy MongoClient
 
 ```js
-import { proxyClient, MongoClientHack } from "mongodb-hack-middleware";
+import { proxyClient, MongoClientHack } from "mongodb-middleware-utils";
 
 // using MongoClientHack instance
 const mongoServer = new MongoClientHack({
@@ -67,7 +67,7 @@ await db.collection('hack_test').insertOne({
 
 ```
 
-## searching text
+### searching text
 
 ```js
 const nameOrDesFieldSearch = await db.collection().find({ $text: { $search: 'sit amet consec' } }).toArray();
@@ -95,7 +95,7 @@ const nameFieldSearch = await db.collection().find({ $text: { $search: 'onaba', 
 console.log('searchResult: ', nameFieldSearch);
 ```
 
-## random query
+### random query
 
 ```js
 // make sure you followed this process when querying random document ($sample at the first pipeline and $match at the second one)
@@ -136,6 +136,10 @@ All field value starting with `__fta_` or equals to `__rdz` are removed for read
 ## Limitations
 
 - As the maximum size of a document in mongodb is 16mb, Avoid saving more than 37,000 bytes of characters for fulltext field. this 37,000 chars can produce approximately 301,391 item of strings in an array weighing 11mb in size.
+
+- Avoid nesting field you wants to enable for fulltext search, always place it at the first object iteration stage
+
+- Avoid nesting $text, always place it at the first object iteration stage
 
 ## Cons
 

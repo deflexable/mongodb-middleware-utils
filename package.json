@@ -1,19 +1,19 @@
 {
-  "name": "mongodb-hack-middleware",
+  "name": "mongodb-middleware-utils",
   "version": "1.0.0",
-  "description": "Mongodb middleware for custom fulltext search, getting exact count of random documents and more..",
+  "description": "Mongodb middleware for custom fulltext search, getting precise count of random documents and more..",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deflexable/mongodb-hack-middleware.git"
+    "url": "git+https://github.com/deflexable/mongodb-middleware-utils.git"
   },
   "bugs": {
-    "url": "https://github.com/deflexable/mongodb-hack-middleware/issues"
+    "url": "https://github.com/deflexable/mongodb-middleware-utils/issues"
   },
-  "homepage": "https://github.com/deflexable/mongodb-hack-middleware#readme",
+  "homepage": "https://github.com/deflexable/mongodb-middleware-utils#readme",
   "keywords": [
     "mongodb",
     "mongodb-fulltext-search",
