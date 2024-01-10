@@ -22,7 +22,7 @@ export class MongoClientHack extends MongoClient {
     __intercepted = true;
 };
 
-export const interceptClient = (interceptMap) => (client) => {
+export const proxyClient = (interceptMap) => (client) => {
     if (client.__intercepted) throw `this MongoClient instance was previously intercepted`;
 
     const originalDbInstance = client.db.bind(client);
@@ -426,6 +426,7 @@ const buildInterception = async (doc, { fulltext, random }) => {
 const isRawObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 
 export const getFulltextArray = async (t) => {
+    // to avoid freezing the main thread with large text we run in background thread
     const chunks = await Promise.all(chunkifyText(t).map(text =>
         runBackgroundThread(`${__dirname}/worker.js`, { text })
     ));
@@ -443,8 +444,8 @@ const runBackgroundThread = (script, args) => new Promise(resolve => {
     worker.postMessage(args);
 });
 
-const chunkSize = 9 * 60; // max words
-const chunkBreakPoint = 5000; // max chars
+const chunkSize = 9 * 200; // max words
+const chunkBreakPoint = 20000; // max chars
 
 const chunkifyText = (t = '') => {
     t = t.split(' ');

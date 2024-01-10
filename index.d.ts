@@ -19,5 +19,5 @@ export class MongoClientHack extends MongoClient {
     constructor(config: MongoClientHackConfig);
 }
 
-export function interceptClient(map: InterceptionMap): (client: MongoClient) => void;
+export function proxyClient(map: InterceptionMap): (client: MongoClient) => void;
 export function getFulltextArray(text: string): Promise<string[]>;

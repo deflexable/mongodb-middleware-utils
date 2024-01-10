@@ -111,7 +111,7 @@ const searchRes = await db.collection('hack_test').aggregate([
 ### fulltext index
 
 Some write operations are proxied to add an extra field value to the document for querying random document and searching text.
-Some read operations are also proxied to remove redundant field value.
+Some read operations are also proxied to remove redundant field value so as not to overwhelm the memory.
 The following methods are proxied on the collection instance to transform the document
 
 - `insertOne`
@@ -129,8 +129,20 @@ The following methods are proxied on the collection instance to transform the do
 `{ $text: { $search: 'onaba', $field: 'des' } }` is transformed to `{ $or: [...your-$Or-Props, { __fta_des: { $in: ['onaba'] } }] }`
 while `{ $text: { $search: 'onaba', $field: ['name', 'des'] } }` is transformed to `{ $or: [...your-$Or-Props, { __fta_name: { $in: ['onaba'] } }, { __fta_des: { $in: ['onaba'] } }] }`
 
+### read operation transformation
+
+All field value starting with `__fta_` or equals to `__rdz` are removed for read operations (`find`, `findOne`, `watch`).
+
 ## Limitations
 
-- As the maximum size of a document in mongodb is 16mb, Avoid saving more than 37,000 bytes of characters for fulltext field. this 37,000 chars can produce approximately 301,391 strings in array with 11mb in size.
+- As the maximum size of a document in mongodb is 16mb, Avoid saving more than 37,000 bytes of characters for fulltext field. this 37,000 chars can produce approximately 301,391 item of strings in an array weighing 11mb in size.
 
 ## Cons
+
+- Indexes in MongoDB are used to speed up search operations, but indexing large arrays can result in significantly increased index size
+
+- MongoDB has a maximum document size limit (16 megabytes). If the array, along with other fields in the document, approaches or exceeds this limit, you may encounter issues
+
+## License
+
+MIT
