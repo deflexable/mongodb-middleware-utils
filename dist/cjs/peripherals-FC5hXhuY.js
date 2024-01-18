@@ -1,0 +1,1 @@
+"use strict";const t=new Set(".,?!-_;()[]:+=^<>|/".split(""));exports.STOP_LETTERS=t,exports.transformPunctuation=(s="")=>s.toLowerCase().split("").map(((s,o,e)=>t.has(s)&&o&&" "!==e[o-1]?` ${s}`:s)).join("");

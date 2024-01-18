@@ -4,11 +4,16 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { transformPunctuation } from './peripherals';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const getDirname = () => {
+    if (typeof __dirname !== 'undefined') return __dirname;
+    return dirname(fileURLToPath(import.meta.url));
+}
 
-const FULLTEXT_ARRAY_PREFIX = '__fta_';
-const RANDOMIZER_FIELD = '__rdz';
-const RANDOMIZE_CHUNK_SIZE = 3;
+const __dirnamePath = getDirname();
+
+const FULLTEXT_ARRAY_PREFIX = '__fta_',
+    RANDOMIZER_FIELD = '__rdz',
+    RANDOMIZE_CHUNK_SIZE = 3;
 
 export class MongoClientHack extends MongoClient {
     constructor({ map, url, options }) {
@@ -428,7 +433,7 @@ const isRawObject = (o) => o !== null && typeof o === 'object' && !Array.isArray
 export const getFulltextArray = async (t) => {
     // to avoid freezing the main thread with large text we run in background thread
     const chunks = await Promise.all(chunkifyText(t).map(text =>
-        runBackgroundThread(`${__dirname}/worker.js`, { text })
+        runBackgroundThread(`${__dirnamePath}/worker.js`, { text })
     ));
 
     return [

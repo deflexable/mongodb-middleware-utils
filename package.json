@@ -1,10 +1,14 @@
 {
   "name": "mongodb-middleware-utils",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Mongodb middleware for custom fulltext search, getting precise count of random documents and more..",
-  "main": "index.js",
+  "module": "dist/esm/index.js",
+  "main": "dist/cjs/index.js",
+  "typings": "index.d.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rm -rf dist && rollup -c --bundleConfigAsCjs",
+    "publish-pkg": "yarn build && npm publish"
   },
   "repository": {
     "type": "git",
@@ -25,5 +29,13 @@
   "license": "MIT",
   "dependencies": {
     "@types/mongodb": "^4.0.7"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.7",
+    "@babel/preset-env": "^7.23.8",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "rollup": "^4.9.5",
+    "rollup-plugin-terser": "^7.0.2"
   }
 }
