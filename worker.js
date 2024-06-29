@@ -1,7 +1,7 @@
 import { parentPort } from 'worker_threads';
 import { STOP_LETTERS, transformPunctuation } from './peripherals';
 
-async function generateFulltextIndex(inputString = '') {
+export function generateFulltextIndex(inputString = '') {
     inputString = transformPunctuation(inputString);
 
     const words = inputString.split(/\s+/).filter(v => v);
@@ -29,7 +29,8 @@ async function generateFulltextIndex(inputString = '') {
     return [...searchArray];
 }
 
-parentPort.on('message', async ({ text }) => {
-    const indexes = await generateFulltextIndex(text);
-    parentPort.postMessage({ indexes });
-});
+if (parentPort)
+    parentPort.on('message', ({ text }) => {
+        const indexes = generateFulltextIndex(text);
+        parentPort.postMessage({ indexes });
+    });

@@ -24,7 +24,11 @@ export default {
             dir: 'dist/cjs',
             format: 'cjs',
             assetFileNames: '[name].[ext]'
-        }
+        },
+        // {
+        //   file: 'dist/esm/index.min.js',
+        //   format: 'es',
+        // },
     ],
     external: ['mongodb', 'worker_threads', 'url', 'path'], // Add other external dependencies
 };

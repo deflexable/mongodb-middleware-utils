@@ -1,12 +1,14 @@
 # mongodb-middleware-utils
 
-mongodb-middleware-utils provides a comprehensive solution for enhancing MongoDB collections with full-text indexing capabilities and offers a convenient way to retrieve random documents. Whether you're building a search-intensive application or need a way to fetch diverse data for testing locally or on-premise, this streamlines these processes for MongoDB users using the [community version](https://www.mongodb.com/try/download/community)
+mongodb-middleware-utils provides a work around solution for enhancing MongoDB collections with full-text indexing capabilities and offers a convenient way to retrieve random documents. Whether you're building a search-intensive application or need a way to fetch diverse data for testing locally or on-premise, this streamlines these processes for MongoDB users using the [community version](https://www.mongodb.com/try/download/community).
 
 ## Key Advantages
 
 - MongoDB [community version](https://www.mongodb.com/try/download/community) provides a text search feature but it operates on a word-by-word basis using the "or operator" and doesn't support searching word by prefixes. It also can't perform text search on a particular field. This limitation inspired the creation of this repository, offering an enhanced and versatile solution for text-based queries.
 
 - Elevate your random document retrieval experience with our enhanced solution, addressing limitations found in MongoDB's $sample stage. Enjoy precise counts, elimination of duplicates documents, and providing a truly random and distinct set of documents.
+
+- Zero dependency
 
 ## Installation
 
@@ -30,10 +32,20 @@ import { proxyClient, MongoClientHack } from "mongodb-middleware-utils";
 // using MongoClientHack instance
 const mongoServer = new MongoClientHack({
     map: {
-        'examjoint::hack_test': { // your databaseName::collectionName
-            random: true,
-            fulltext: ['name', 'des']
-        }
+        'my_database_name': { // name of the database you want to intercept
+            'my_collection_name': { // name of collection you want to intercept
+               random: true,
+               fulltext: ['name', 'des']
+            }
+        },
+        'another_database_name': {
+            'another_collection_name': {
+               random: true,
+               fulltext: ['name', 'des']
+            }
+        },
+        // you can have as many map as needed
+        ...otherMapping
     },
     url: 'mongodb://127.0.0.1:27017',
     options: {
@@ -46,19 +58,29 @@ const mongoServer = new MongoClientHack({
 const mongoServer = new MongoClient('mongodb://127.0.0.1:27017');
 
 proxyClient({
-    'examjoint::hack_test': { // your databaseName::collectionName
-        random: true,
-        fulltext: ['name', 'des']
-    }
+    'my_database_name': { // name of the database you want to intercept
+        'my_collection_name': { // name of collection you want to intercept
+           random: true,
+           fulltext: ['name', 'des']
+        }
+    },
+    'another_database_name': {
+        'another_collection_name': {
+           random: true,
+           fulltext: ['name', 'des']
+        }
+    },
+    // you can have as many map as needed
+    ...otherMapping
 })(mongoServer);
 
 // connect
 mongoServer.connect();
 
-const db = mongoServer.db('examjoint');
+const db = mongoServer.db('my_database_name');
 
 // insert document
-await db.collection('hack_test').insertOne({
+await db.collection('my_collection_name').insertOne({
     _id: 'doc1',
     name: 'ademola onabanjo',
     date: Date.now(),
@@ -100,7 +122,7 @@ console.log('searchResult: ', nameFieldSearch);
 ```js
 // make sure you followed this process when querying random document ($sample at the first pipeline and $match at the second one)
 // or else it fallback to using the native caller
-const searchRes = await db.collection('hack_test').aggregate([
+const searchRes = await db.collection('my_collection_name').aggregate([
     { $sample: { $size: 5 } }
     { $match: { } }
 ]).limit(1).toArray();
@@ -116,7 +138,7 @@ The following methods are proxied on the collection instance to transform the do
 
 - `insertOne`
 - `insertMany`
-- `updateOne` ($set, $unset)
+- `updateOne` ($set, $setOnInsert, $unset)
 - `replaceOne`
 - `bulkWrite`
 - `find`
