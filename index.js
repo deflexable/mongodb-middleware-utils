@@ -1,4 +1,5 @@
 import { MongoClient } from 'mongodb';
+import { Binary, BSONRegExp, BSONSymbol, Code, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, Timestamp, UUID } from 'mongodb/lib/bson';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -20,9 +21,9 @@ const RANDOMIZE_CHUNK_SIZE = 3;
 const MAX_DOC_SIZE = one_mb * 15;
 
 export class MongoClientHack extends MongoClient {
-    constructor({ map, url, options }) {
+    constructor({ map, url, tokenizer, options }) {
         super(url, options);
-        this.interceptMap = map;
+        this.interceptMap = { map, tokenizer };
         overheadConfig(super.db.bind(this), this.interceptMap);
     }
 
@@ -41,8 +42,13 @@ export const proxyClient = (interceptMap) => (client) => {
     client.__intercepted = true;
 }
 
-export const overheadConfig = (dbRef, interceptMap) => {
-    Object.entries(interceptMap).forEach(([dbName, colObj]) => {
+const overheadConfig = (dbRef, interceptMap) => {
+    const { map, tokenizer } = interceptMap;
+
+    if (tokenizer !== undefined && typeof tokenizer !== 'function')
+        throw `expected a function for field:"tokenizer" but got ${tokenizer}`;
+
+    Object.entries(map).forEach(([dbName, colObj]) => {
 
         Object.entries(colObj).forEach(([colName, value]) => {
             const logRef = `dbName(${dbName}), collectionName(${colName})`;
@@ -93,9 +99,11 @@ export const overheadConfig = (dbRef, interceptMap) => {
                                 ...Object.fromEntries(expectingText.map(k => [k]))
                             }).length;
                             if (freeBytes > 0) {
-                                const indexes = await Promise.all(expectingText.map(async k =>
-                                    [k, await getFulltextArray(thisData[k])]
-                                ));
+                                const indexes = await Promise.all(expectingText.map(async k => {
+                                    const thisText = thisData[k];
+                                    const tokenText = typeof thisText === 'string' && await tokenizer?.(thisText);
+                                    return [k, await getFulltextArray(tokenizer ? tokenText : thisText)];
+                                }));
                                 const limitedIndexes = indexes.map(([k]) => [k, new Set([])]);
                                 let shouldBreak, sizer = 0;
 
@@ -104,7 +112,7 @@ export const overheadConfig = (dbRef, interceptMap) => {
                                     for (let x = 0; x < indexes[i][1].length; x++) {
                                         const element = indexes[i][1][x];
 
-                                        if (!(shouldBreak = (sizer += (element.length + 4)) >= freeBytes)) {
+                                        if (!((shouldBreak = (sizer += (element.length + 4))) >= freeBytes)) {
                                             limitedIndexes[i][1].add(element);
                                         } else break;
                                     }
@@ -126,9 +134,14 @@ export const overheadConfig = (dbRef, interceptMap) => {
                                 });
                             }
                         } else {
-                            const indexes = await Promise.all(expectingText.map(async k =>
-                                [`${FULLTEXT_ARRAY_PREFIX}${k}`, await getFulltextArray(thisData[k])]
-                            ));
+                            const indexes = await Promise.all(expectingText.map(async k => {
+                                const thisText = thisData[k];
+                                const thisToken = typeof thisText === 'string' && (await tokenizer?.(thisText));
+                                return [
+                                    `${FULLTEXT_ARRAY_PREFIX}${k}`,
+                                    await getFulltextArray(tokenizer ? thisToken : thisText)
+                                ];
+                            }));
 
                             colRef.updateOne({ _id }, {
                                 $set: {
@@ -144,7 +157,15 @@ export const overheadConfig = (dbRef, interceptMap) => {
     });
 }
 
+/**
+ * 
+ * @param {MongoClient['db']} dbRef 
+ * @param {*} interceptMap 
+ * @returns 
+ */
 const interceptDB = (dbRef, interceptMap) => function () {
+    const { map, tokenizer } = interceptMap;
+
     const dbInstance = dbRef(...[...arguments]),
         [thisDbName] = [...arguments];
 
@@ -155,9 +176,10 @@ const interceptDB = (dbRef, interceptMap) => function () {
             thisCol = {},
             thisColName = thisColArgs[0];
 
-        Object.entries(interceptMap).forEach(([dbName, colObj]) => {
+        Object.entries(map).forEach(([dbName, colObj]) => {
 
-            Object.entries(colObj).forEach(([colName, value]) => {
+            Object.entries(colObj).forEach(([colName, valueX]) => {
+                const value = { ...valueX, tokenizer };
                 if (thisDbName === dbName && thisColName === colName && (value?.fulltext || value?.random)) {
                     const { fulltext, random } = value;
 
@@ -185,13 +207,9 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         return tip;
                     }
 
-                    const cleanUpResult = res => {
-                        let d = res;
-
-                        if (Buffer.isBuffer(d)) d = JSON.parse(Buffer.from(d).toString('utf-8'));
-                        if (!d) return Buffer.isBuffer(res) ? res : d;
-
-                        let hits = (Array.isArray(d) ? d : [d]).map(doc => {
+                    const cleanUpResult = (res) => {
+                        const hits = (Array.isArray(res) ? res : [res]).map(doc => {
+                            if (!doc) return doc;
                             const n = { ...doc };
 
                             Object.keys(doc).forEach(k => {
@@ -202,10 +220,9 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             });
                             return n;
                         });
-                        hits = Array.isArray(d) ? hits : hits[0];
 
-                        return Buffer.isBuffer(res) ? Buffer.from(JSON.stringify(hits), 'utf8') : hits;
-                    }
+                        return Array.isArray(res) ? hits : hits[0];
+                    };
 
                     const buildUpdateInterception = async (d) => {
 
@@ -301,16 +318,15 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         const [pipeline, ...rest] = [...arguments];
                         const streamInstance = colInstance.watch(Array.isArray(pipeline) ? pipeline.map(tipOff) : tipOff(pipeline), ...rest),
                             mutatedStream = {};
-                        let listenerIte = 0,
-                            listenerMap = {};
+                        const listenerMap = {};
 
                         ['on', 'once', 'prependListener', 'addListener', 'prependOnceListener'].forEach(method => {
                             mutatedStream[method] = (event, callback) => {
 
                                 if (event === 'change') {
-                                    const processId = `${++listenerIte}`;
+                                    const processId = `${Math.random()}`;
                                     listenerMap[processId] = s => {
-                                        const h = Buffer.isBuffer(s) ? JSON.parse(Buffer.from(s).toString('utf-8')) : s;
+                                        const h = s;
                                         if (h.fullDocument)
                                             h.fullDocument = cleanUpResult(h.fullDocument);
                                         if (h.fullDocumentBeforeChange)
@@ -318,7 +334,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                         if (h.updateDescription?.updatedFields)
                                             h.updateDescription.updatedFields = cleanUpResult(h.updateDescription.updatedFields)
 
-                                        callback?.(Buffer.isBuffer(s) ? Buffer.from(JSON.stringify(h), 'utf8') : h);
+                                        callback?.(h);
                                     }
 
                                     if (!callback.prototype) callback.prototype = {};
@@ -357,6 +373,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             set(_, n, v) {
                                 if (mutatedStream[n]) mutatedStream[n] = v;
                                 else streamInstance[n] = v;
+                                return true;
                             }
                         });
                     }
@@ -378,8 +395,8 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                 return v;
                             }),
                             options
-                        ),
-                            prevToArray = aggregateInstance.toArray.bind(aggregateInstance);
+                        );
+                        const prevToArray = aggregateInstance.toArray.bind(aggregateInstance);
 
                         aggregateInstance.toArray = async () => {
                             return cleanUpResult(await prevToArray());
@@ -387,12 +404,12 @@ const interceptDB = (dbRef, interceptMap) => function () {
 
                         let randomPromise = async () => {
                             const [smallDoc, bigDoc] = await Promise.all(['asc', 'desc'].map(dir =>
-                                colInstance.find({ ...filter }).sort(RANDOMIZER_FIELD, dir).limit(1).toArray()
+                                colInstance.find({ ...filter }, options).sort(RANDOMIZER_FIELD, dir).limit(1).toArray()
                             ));
                             const [min, max] = [
                                 smallDoc[0]?.[RANDOMIZER_FIELD],
                                 bigDoc[0]?.[RANDOMIZER_FIELD]
-                            ];
+                            ].map(v => v && v * 1);
 
                             if (isNaN(min) || isNaN(max)) {
                                 return [];
@@ -412,24 +429,24 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                     colInstance.find({
                                         ...filter,
                                         [`${RANDOMIZER_FIELD}`]: { $gte: offset }
-                                    }).sort(RANDOMIZER_FIELD, 'asc').limit(RANDOMIZE_CHUNK_SIZE).toArray()
+                                    }, options).sort(RANDOMIZER_FIELD, 'asc').limit(RANDOMIZE_CHUNK_SIZE).toArray()
                                 ));
                                 const result = shuffleArray(
-                                    offsetDoc.flat().filter((v, i, a) => a.findIndex(k => k._id === v._id) === i)
+                                    offsetDoc.flat().filter((v, i, a) => a.findIndex(k => CompareBson.equal(k._id, v._id)) === i)
                                 );
 
                                 if (result.length >= size) {
                                     return cleanUpResult(result.slice(0, size));
                                 } else {
                                     const edgesDoc = await Promise.all(['asc', 'desc'].map(dir =>
-                                        colInstance.find({ ...filter }).sort(RANDOMIZER_FIELD, dir).limit(Math.ceil(size / 2)).toArray()
+                                        colInstance.find({ ...filter }, options).sort(RANDOMIZER_FIELD, dir).limit(Math.ceil(size / 2)).toArray()
                                     ));
                                     const finalResult = [
                                         ...result,
                                         ...shuffleArray(
-                                            edgesDoc.flat().filter((v, i, a) => a.findIndex(k => k._id === v._id) === i)
+                                            edgesDoc.flat().filter((v, i, a) => a.findIndex(k => CompareBson.equal(k._id, v._id)) === i)
                                         )
-                                    ].filter((v, i, a) => a.findIndex(k => k._id === v._id) === i);
+                                    ].filter((v, i, a) => a.findIndex(k => CompareBson.equal(k._id, v._id)) === i);
 
                                     return cleanUpResult(finalResult.slice(0, size));
                                 }
@@ -448,6 +465,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                 if (n === 'toArray' && willRandomize) {
                                     randomPromise = v;
                                 } else aggregateInstance[n] = v;
+                                return true;
                             }
                         });
                     }
@@ -465,6 +483,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
             set: (_, n, v) => {
                 if (thisCol[n]) thisCol[n] = v;
                 else colInstance[n] = v;
+                return true;
             }
         });
     }
@@ -479,6 +498,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
         set(_, n, v) {
             if (n === 'collection') collectionX = v;
             else dbInstance[n] = v;
+            return true;
         }
     });
 }
@@ -504,7 +524,7 @@ const getRandomNumber = (max = 70, min = 0) => {
 
 const serializeSearch = t => transformPunctuation(t.trim());
 
-const buildInterception = async (doc, { fulltext, random, overhead }) => {
+const buildInterception = async (doc, { fulltext, random, overhead, tokenizer }) => {
     if (overhead) return doc;
     if (!isRawObject(doc)) return doc;
     const newDoc = { ...doc };
@@ -519,7 +539,8 @@ const buildInterception = async (doc, { fulltext, random, overhead }) => {
                 t.trim() &&
                 !doc[`${FULLTEXT_ARRAY_PREFIX}${field}`]
             ) {
-                newDoc[`${FULLTEXT_ARRAY_PREFIX}${field}`] = await getFulltextArray(t);
+                const thisToken = typeof t === 'string' && await tokenizer?.(t);
+                newDoc[`${FULLTEXT_ARRAY_PREFIX}${field}`] = await getFulltextArray(tokenizer ? thisToken : t);
             }
         }));
     }
@@ -527,7 +548,7 @@ const buildInterception = async (doc, { fulltext, random, overhead }) => {
         newDoc[RANDOMIZER_FIELD] = Math.random();
 
     return newDoc;
-}
+};
 
 const isRawObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 
@@ -543,12 +564,13 @@ export const getFulltextArray = async (t) => {
     return [
         ...new Set(chunks.map(v => v.indexes).flat())
     ];
-}
+};
 
 const runBackgroundThread = (script, args) => new Promise(resolve => {
     const worker = new Worker(script);
     worker.on('message', out => {
         resolve(out);
+        worker.terminate();
     });
     worker.postMessage(args);
 });
@@ -592,4 +614,61 @@ const chunkifyText = (t = '') => {
     });
 
     return result;
-}
+};
+
+const CompareBson = {
+    equal: (doc, q, explicit) => {
+        doc = downcastBSON(doc);
+        q = downcastBSON(q);
+
+        if (
+            isBasicBSON(q) ||
+            isBasicBSON(doc)
+        ) {
+            return sameInstance(doc, q) &&
+                JSON.stringify(doc) === JSON.stringify(q);
+        }
+
+        if (q instanceof RegExp) {
+            return sameInstance(doc, q) ?
+                (doc.source === q.source && doc.flags === q.flags) :
+                (explicit && typeof doc === 'string' && q.test(doc));
+        }
+        return JSON.stringify(doc) === JSON.stringify(q)
+    }
+};
+
+const sameInstance = (var1, var2) => {
+    try {
+        return var1.constructor === var2.constructor &&
+            Object.getPrototypeOf(var1) === Object.getPrototypeOf(var2)
+    } catch (_) {
+        return false;
+    }
+};
+
+const downcastBSON = d => {
+    if (d instanceof BSONRegExp)
+        return new RegExp(d.pattern, d.options);
+    if (
+        [
+            Long,
+            Double,
+            Int32,
+            Decimal128
+        ].some(v => d instanceof v)
+    ) return d * 1;
+    return d;
+};
+
+const isBasicBSON = d =>
+    [
+        Code,
+        ObjectId,
+        Binary,
+        MaxKey,
+        MinKey,
+        UUID,
+        Timestamp,
+        BSONSymbol
+    ].some(v => d instanceof v);

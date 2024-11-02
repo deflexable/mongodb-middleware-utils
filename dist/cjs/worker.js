@@ -1,1 +1,1 @@
-"use strict";require("worker_threads");var e=require("./worker-rtLqju9E.js");exports.generateFulltextIndex=e.generateFulltextIndex;
+"use strict";require("worker_threads");var e=require("./worker-BwM7ibXw.js");exports.generateFulltextIndex=e.generateFulltextIndex;

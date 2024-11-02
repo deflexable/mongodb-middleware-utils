@@ -30,5 +30,5 @@ export default {
         //   format: 'es',
         // },
     ],
-    external: ['mongodb', 'worker_threads', 'url', 'path'], // Add other external dependencies
+    external: ['mongodb', 'worker_threads', 'url', 'path', 'mongodb/lib/bson'], // Add other external dependencies
 };

@@ -39,13 +39,23 @@ interface InterceptionMap {
     [dbName: string]: InterceptedCollection;
 }
 
-interface MongoClientHackConfig {
+interface MongoClientHackConfig extends InterceptionOption {
+    url?: string;
+    options?: MongoClientOptions;
+}
+
+interface InterceptionOption {
     /**
      * map out the collections you want to intercept
      */
     map: InterceptionMap;
-    url?: string;
-    options?: MongoClientOptions;
+    /**
+     * handle text tokenization
+     * @example 
+     * "ทดสอบระบบตัดคำ" ----> "ทดสอบ ระบบ ตัด คำ"
+     * "南京市长江大桥" ----> "南京市 长江大桥"
+     */
+    tokenizer?: (text: string) => string | Promise<string>;
 }
 
 /**
@@ -113,7 +123,7 @@ export class MongoClientHack extends MongoClient {
  *   mongoServer.connect();
  * ```
  */
-export function proxyClient(map: InterceptionMap): (client: MongoClient) => void;
+export function proxyClient(config: InterceptionOption): (client: MongoClient) => void;
 export function getFulltextArray(text: string): Promise<string[]>;
 
 export const FULLTEXT_ARRAY_PREFIX: '__fta_';

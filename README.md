@@ -31,90 +31,103 @@ import { proxyClient, MongoClientHack } from "mongodb-middleware-utils";
 
 // using MongoClientHack instance
 const mongoServer = new MongoClientHack({
-    map: {
-        'my_database_name': { // name of the database you want to intercept
-            'my_collection_name': { // name of collection you want to intercept
-               random: true,
-               fulltext: ['name', 'des']
-            }
-        },
-        'another_database_name': {
-            'another_collection_name': {
-               random: true,
-               fulltext: ['name', 'des']
-            }
-        },
-        // you can have as many map as needed
-        ...otherMapping
+  map: {
+    my_database_name: {
+      // name of the database you want to intercept
+      my_collection_name: {
+        // name of collection you want to intercept
+        random: true,
+        fulltext: ["name", "des"],
+      },
     },
-    url: 'mongodb://127.0.0.1:27017',
-    options: {
-        useUnifiedTopology: true,
-        ...otherProps
-    }
+    another_database_name: {
+      another_collection_name: {
+        random: true,
+        fulltext: ["name", "des"],
+      },
+    },
+    // you can have as many map as needed
+    ...otherMapping,
+  },
+  tokenizer: (text) => string, // <--- handle text tokenization here
+  url: "mongodb://127.0.0.1:27017",
+  options: {
+    useUnifiedTopology: true,
+    ...otherProps,
+  },
 });
 
 // using MongoClient
-const mongoServer = new MongoClient('mongodb://127.0.0.1:27017');
+const mongoServer = new MongoClient("mongodb://127.0.0.1:27017");
 
 proxyClient({
-    'my_database_name': { // name of the database you want to intercept
-        'my_collection_name': { // name of collection you want to intercept
-           random: true,
-           fulltext: ['name', 'des']
-        }
+  map: {
+    my_database_name: {
+      // name of the database you want to intercept
+      my_collection_name: {
+        // name of collection you want to intercept
+        random: true,
+        fulltext: ["name", "des"],
+      },
     },
-    'another_database_name': {
-        'another_collection_name': {
-           random: true,
-           fulltext: ['name', 'des']
-        }
+    another_database_name: {
+      another_collection_name: {
+        random: true,
+        fulltext: ["name", "des"],
+      },
     },
     // you can have as many map as needed
-    ...otherMapping
+    ...otherMapping,
+  },
+  tokenizer: (text) => string, // <--- handle text tokenization here
 })(mongoServer);
 
 // connect
 mongoServer.connect();
 
-const db = mongoServer.db('my_database_name');
+const db = mongoServer.db("my_database_name");
 
 // insert document
-await db.collection('my_collection_name').insertOne({
-    _id: 'doc1',
-    name: 'ademola onabanjo',
-    date: Date.now(),
-    des: 'Lorem ipsum dolor sit amet consectetur'
+await db.collection("my_collection_name").insertOne({
+  _id: "doc1",
+  name: "ademola onabanjo",
+  date: Date.now(),
+  des: "Lorem ipsum dolor sit amet consectetur",
 });
-
 ```
 
 ### searching text
 
 ```js
-const nameOrDesFieldSearch = await db.collection().find({ $text: { $search: 'sit amet consec' } }).toArray();
+const nameOrDesFieldSearch = await db
+  .collection()
+  .find({ $text: { $search: "sit amet consec" } })
+  .toArray();
 
-// outputs: 
+// outputs:
 // [{
 //     _id: 'doc1',
 //     name: 'ademola onabanjo',
 //     date: Date.now(),
 //     des: 'Lorem ipsum dolor sit amet consectetur'
 // }]
-console.log('searchResult: ', nameOrDesFieldSearch);
+console.log("searchResult: ", nameOrDesFieldSearch);
 
 // search single field
 
-const nameFieldSearch = await db.collection().find({ $text: { $search: 'onaba', $field: 'name' } }).toArray();
+const nameFieldSearch = await db
+  .collection()
+  .find({ $text: { $search: "onaba", $field: "name" } })
+  .toArray();
 
-// outputs: 
+// outputs:
 // [{
 //     _id: 'doc1',
 //     name: 'ademola onabanjo',
 //     date: Date.now(),
 //     des: 'Lorem ipsum dolor sit amet consectetur'
 // }]
-console.log('searchResult: ', nameFieldSearch);
+console.log("searchResult: ", nameFieldSearch);
 ```
 
 ### random query
