@@ -43,10 +43,15 @@ export const proxyClient = (interceptMap) => (client) => {
 }
 
 const overheadConfig = (dbRef, interceptMap) => {
-    const { map, tokenizer } = interceptMap;
+    const { map, tokenizer, indexNotice } = interceptMap;
 
     if (tokenizer !== undefined && typeof tokenizer !== 'function')
         throw `expected a function for field:"tokenizer" but got ${tokenizer}`;
+
+    if (
+        indexNotice !== undefined &&
+        !['warn', 'error', 'off'].some(v => indexNotice === v)
+    ) throw `expected either a function or any of 'warn', 'error', 'off' for field:"indexNotice" but got ${indexNotice}`;
 
     Object.entries(map).forEach(([dbName, colObj]) => {
 
@@ -164,7 +169,7 @@ const overheadConfig = (dbRef, interceptMap) => {
  * @returns 
  */
 const interceptDB = (dbRef, interceptMap) => function () {
-    const { map, tokenizer } = interceptMap;
+    const { map, tokenizer, indexNotice } = interceptMap;
 
     const dbInstance = dbRef(...[...arguments]),
         [thisDbName] = [...arguments];
@@ -257,9 +262,11 @@ const interceptDB = (dbRef, interceptMap) => function () {
 
                         thisCol[op] = async function () {
                             const a = [...arguments];
+                            const filterObj = tipOff(a[0]);
 
+                            await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
                             return (await colInstance[op](
-                                tipOff(a[0]),
+                                filterObj,
                                 await buildUpdateInterception(a[1]),
                                 a[2]
                             ));
@@ -267,10 +274,15 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     });
 
                     thisCol.replaceOne = async function () {
+                        const a = [...arguments];
+                        const filterObj = tipOff(a[0]);
+
+                        await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
+
                         return await colInstance.replaceOne(
-                            tipOff([...arguments][0]),
-                            await buildInterception([...arguments][1], value),
-                            [...arguments][2]
+                            filterObj,
+                            await buildInterception(a[1], value),
+                            a[2]
                         );
                     };
 
@@ -281,6 +293,8 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             await Promise.all(tip.map(async v => {
                                 const b = {};
                                 await Promise.all(Object.entries(v).map(async ([key, obj]) => {
+                                    if (key !== 'insertOne')
+                                        await checkIndex(colInstance.find(obj.filter).limit(1), indexNotice);
 
                                     b[key] = {
                                         ...obj,
@@ -299,10 +313,14 @@ const interceptDB = (dbRef, interceptMap) => function () {
 
                     thisCol.find = function () {
                         let [tip, ...rest] = [...arguments];
-                        const findInstance = colInstance.find(tipOff(tip), ...rest),
-                            prevToArray = findInstance.toArray.bind(findInstance);
+                        const filter = tipOff(tip);
+                        const findInstance = colInstance.find(filter, ...rest),
+                            prevToArray = findInstance.toArray.bind(findInstance),
+                            bindedLimit = findInstance.limit.bind(findInstance);
 
                         findInstance.toArray = async () => {
+                            await checkIndex(bindedLimit(1), indexNotice);
+
                             return cleanUpResult(await prevToArray());
                         }
                         return findInstance;
@@ -310,7 +328,11 @@ const interceptDB = (dbRef, interceptMap) => function () {
 
                     thisCol.findOne = async function () {
                         let [tip, ...rest] = [...arguments];
-                        const d = await colInstance.findOne(tipOff(tip), ...rest);
+                        const filter = tipOff(tip);
+
+                        await checkIndex(colInstance.find(filter).limit(1), indexNotice);
+
+                        const d = await colInstance.findOne(filter, ...rest);
                         return cleanUpResult(d);
                     };
 
@@ -383,7 +405,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         const [sample, match] = pipeline,
                             size = sample?.$sample?.size,
                             filter = tipOff(match?.$match),
-                            willRandomize = (Number.isInteger(size) && size > 0 && random);
+                            willRandomize = Number.isInteger(size) && size > 0 && random;
 
                         const aggregateInstance = colInstance.aggregate(
                             pipeline.map(v => {
@@ -403,9 +425,14 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         }
 
                         let randomPromise = async () => {
-                            const [smallDoc, bigDoc] = await Promise.all(['asc', 'desc'].map(dir =>
-                                colInstance.find({ ...filter }, options).sort(RANDOMIZER_FIELD, dir).limit(1).toArray()
-                            ));
+                            const [[smallDoc, bigDoc]] = await Promise.all([
+                                Promise.all(['asc', 'desc'].map(dir =>
+                                    colInstance.find({ ...filter }, options).sort(RANDOMIZER_FIELD, dir).limit(1).toArray()
+                                )),
+                                Promise.all(['asc', 'desc'].map(dir =>
+                                    checkIndex(colInstance.find(filter).sort(RANDOMIZER_FIELD, dir).limit(1), indexNotice)
+                                ))
+                            ]);
                             const [min, max] = [
                                 smallDoc[0]?.[RANDOMIZER_FIELD],
                                 bigDoc[0]?.[RANDOMIZER_FIELD]
@@ -428,7 +455,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                 const offsetDoc = await Promise.all(randomOffset.map(offset =>
                                     colInstance.find({
                                         ...filter,
-                                        [`${RANDOMIZER_FIELD}`]: { $gte: offset }
+                                        [RANDOMIZER_FIELD]: { $gte: offset }
                                     }, options).sort(RANDOMIZER_FIELD, 'asc').limit(RANDOMIZE_CHUNK_SIZE).toArray()
                                 ));
                                 const result = shuffleArray(
@@ -502,6 +529,30 @@ const interceptDB = (dbRef, interceptMap) => function () {
         }
     });
 }
+
+/**
+ * checks if an index exists for a given query
+ * @param {import("mongodb").FindCursor} queryRef
+ */
+const checkIndex = async (queryRef, indexNotice) => {
+    if (indexNotice === 'off' || !indexNotice) return;
+    const explanation = await queryRef.explain('queryPlanner');
+    const { stage, indexName, inputStage } = { ...explanation?.queryPlanner?.winningPlan?.inputStage };
+    const { stage: stage2, indexName: indexName2 } = { ...inputStage };
+    if (
+        (stage !== 'IXSCAN' || !indexName) &&
+        (stage2 !== 'IXSCAN' || !indexName2)
+    ) {
+        if (typeof indexNotice === 'function') {
+            indexNotice(explanation?.command);
+            return;
+        }
+        const errMessage = 'cannot perform an index scan for mongodb query with command:';
+        if (indexNotice === 'error') {
+            throw `${errMessage} ${JSON.stringify(explanation?.command)}`;
+        } else console.warn(errMessage, explanation?.command);
+    }
+};
 
 const shuffleArray = (n) => {
     const array = [...n];

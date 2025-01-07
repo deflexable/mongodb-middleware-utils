@@ -56,6 +56,18 @@ interface InterceptionOption {
      * "南京市长江大桥" ----> "南京市 长江大桥"
      */
     tokenizer?: (text: string) => string | Promise<string>;
+    /**
+     * Get notified about queries that does not use an index scan
+     * this is notify by logging or emittion
+     * 
+     * - 'warn': equilvalent to `console.warn`
+     * - 'error': this will throw an error for every `find` operations
+     * - 'off': disable index checking. the same as `undefined`
+     * 
+     * kindly set this to `undefined` in production environment to avoid unneccessary overhead computations and delays
+     * @default undefined
+     */
+    indexNotice?: Function | 'warn' | 'error' | 'off' | undefined;
 }
 
 /**

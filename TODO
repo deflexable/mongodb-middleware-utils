@@ -1,4 +1,4 @@
 - implement safe-limit (to limit and avoid overflowing of text character) ✅
 - let developer provide their custom function for tokenizing text ✅
-- add like `indexNotice: 'error' | 'warn' | 'off'` to warn developer of query that doesn't have an index
+- add like `indexNotice: 'error' | 'warn' | 'off'` to warn developer of query that doesn't have an index ✅
 - fix bson options ✅

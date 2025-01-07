@@ -6,7 +6,11 @@ mongodb-middleware-utils provides a work around solution for enhancing MongoDB c
 
 - MongoDB [community version](https://www.mongodb.com/try/download/community) provides a text search feature but it operates on a word-by-word basis using the "or operator" and doesn't support searching word by prefixes. It also can't perform text search on a particular field. This limitation inspired the creation of this repository, offering an enhanced and versatile solution for text-based queries.
 
-- Elevate your random document retrieval experience with our enhanced solution, addressing limitations found in MongoDB's $sample stage. Enjoy precise counts, elimination of duplicates documents, and providing a truly random and distinct set of documents.
+- Custom Tokenization
+
+- Elevate your random document retrieval with an enhanced solution, addressing limitations found in MongoDB's $sample stage. Access precise counts, elimination of duplicates documents, and providing a truly random and distinct set of documents.
+
+- Index Warning Notice: Get warning about query that uses collection scan (COLSCAN) without an index
 
 - Zero dependency
 
@@ -96,7 +100,7 @@ await db.collection("my_collection_name").insertOne({
 });
 ```
 
-### searching text
+### Searching Text
 
 ```js
 const nameOrDesFieldSearch = await db
@@ -130,7 +134,7 @@ const nameFieldSearch = await db
 console.log("searchResult: ", nameFieldSearch);
 ```
 
-### random query
+### Random Document Query
 
 ```js
 // make sure you followed this process when querying random document ($sample at the first pipeline and $match at the second one)
