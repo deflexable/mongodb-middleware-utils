@@ -53,7 +53,7 @@ const overheadConfig = (dbRef, interceptMap) => {
         !['warn', 'error', 'off'].some(v => indexNotice === v)
     ) throw `expected either a function or any of 'warn', 'error', 'off' for field:"indexNotice" but got ${indexNotice}`;
 
-    Object.entries(map).forEach(([dbName, colObj]) => {
+    Object.entries(map || {}).forEach(([dbName, colObj]) => {
 
         Object.entries(colObj).forEach(([colName, value]) => {
             const logRef = `dbName(${dbName}), collectionName(${colName})`;
@@ -170,6 +170,7 @@ const overheadConfig = (dbRef, interceptMap) => {
  */
 const interceptDB = (dbRef, interceptMap) => function () {
     const { map, tokenizer, indexNotice } = interceptMap;
+    const notifyIndex = indexNotice !== 'off' && indexNotice;
 
     const dbInstance = dbRef(...[...arguments]),
         [thisDbName] = [...arguments];
@@ -181,7 +182,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
             thisCol = {},
             thisColName = thisColArgs[0];
 
-        Object.entries(map).forEach(([dbName, colObj]) => {
+        Object.entries(map || {}).forEach(([dbName, colObj]) => {
 
             Object.entries(colObj).forEach(([colName, valueX]) => {
                 const value = { ...valueX, tokenizer };
@@ -264,7 +265,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             const a = [...arguments];
                             const filterObj = tipOff(a[0]);
 
-                            await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
+                            if (notifyIndex) await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
                             return (await colInstance[op](
                                 filterObj,
                                 await buildUpdateInterception(a[1]),
@@ -277,7 +278,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         const a = [...arguments];
                         const filterObj = tipOff(a[0]);
 
-                        await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
+                        if (notifyIndex) await checkIndex(colInstance.find(filterObj).limit(1), indexNotice);
 
                         return await colInstance.replaceOne(
                             filterObj,
@@ -293,7 +294,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             await Promise.all(tip.map(async v => {
                                 const b = {};
                                 await Promise.all(Object.entries(v).map(async ([key, obj]) => {
-                                    if (key !== 'insertOne')
+                                    if (key !== 'insertOne' && notifyIndex)
                                         await checkIndex(colInstance.find(obj.filter).limit(1), indexNotice);
 
                                     b[key] = {
@@ -312,17 +313,17 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     }
 
                     thisCol.find = function () {
-                        let [tip, ...rest] = [...arguments];
-                        const filter = tipOff(tip);
-                        const findInstance = colInstance.find(filter, ...rest),
-                            prevToArray = findInstance.toArray.bind(findInstance),
-                            bindedLimit = findInstance.limit.bind(findInstance);
+                        const [tip, ...rest] = [...arguments];
+
+                        const findInstance = colInstance.find(tipOff(tip), ...rest),
+                            prevToArray = findInstance.toArray.bind(findInstance);
 
                         findInstance.toArray = async () => {
-                            await checkIndex(bindedLimit(1), indexNotice);
+                            if (notifyIndex) await checkIndex(findInstance.clone().limit(1), indexNotice);
 
                             return cleanUpResult(await prevToArray());
                         }
+
                         return findInstance;
                     }
 
@@ -330,7 +331,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         let [tip, ...rest] = [...arguments];
                         const filter = tipOff(tip);
 
-                        await checkIndex(colInstance.find(filter).limit(1), indexNotice);
+                        if (notifyIndex) await checkIndex(colInstance.find(filter).limit(1), indexNotice);
 
                         const d = await colInstance.findOne(filter, ...rest);
                         return cleanUpResult(d);
@@ -430,7 +431,9 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                     colInstance.find({ ...filter }, options).sort(RANDOMIZER_FIELD, dir).limit(1).toArray()
                                 )),
                                 Promise.all(['asc', 'desc'].map(dir =>
-                                    checkIndex(colInstance.find(filter).sort(RANDOMIZER_FIELD, dir).limit(1), indexNotice)
+                                    notifyIndex ?
+                                        checkIndex(colInstance.find(filter).sort(RANDOMIZER_FIELD, dir).limit(1), indexNotice)
+                                        : Promise.resolve()
                                 ))
                             ]);
                             const [min, max] = [
