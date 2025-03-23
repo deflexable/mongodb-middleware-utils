@@ -21,9 +21,9 @@ const RANDOMIZE_CHUNK_SIZE = 3;
 const MAX_DOC_SIZE = one_mb * 15;
 
 export class MongoClientHack extends MongoClient {
-    constructor({ map, url, tokenizer, options }) {
+    constructor({ map, url, tokenizer, indexNotice, options }) {
         super(url, options);
-        this.interceptMap = { map, tokenizer };
+        this.interceptMap = { map, tokenizer, indexNotice };
         overheadConfig(super.db.bind(this), this.interceptMap);
     }
 
@@ -39,6 +39,7 @@ export const proxyClient = (interceptMap) => (client) => {
 
     const originalDbInstance = client.db.bind(client);
     client.db = interceptDB(originalDbInstance, interceptMap);
+    client.interceptMap = interceptMap;
     client.__intercepted = true;
 }
 
