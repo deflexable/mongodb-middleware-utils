@@ -541,21 +541,68 @@ const interceptDB = (dbRef, interceptMap) => function () {
 const checkIndex = async (queryRef, indexNotice) => {
     if (indexNotice === 'off' || !indexNotice) return;
     const explanation = await queryRef.explain('queryPlanner');
-    const { stage, indexName, inputStage } = { ...explanation?.queryPlanner?.winningPlan?.inputStage };
-    const { stage: stage2, indexName: indexName2 } = { ...inputStage };
+    const { winningPlan, parsedQuery } = explanation?.queryPlanner || {};
+    const isEmptyQuery = !Object.keys(parsedQuery || {}).length;
+    const isGeoIndex = (obj) => ['GEO_NEAR_2DSPHERE'].includes(obj?.stage) &&
+        !!obj.indexName;
+    const isTextIndex = obj => obj?.stage === 'TEXT_MATCH' &&
+        !!obj.indexName;
+
+    // check plain _id index
+    if (winningPlan?.stage === 'IDHACK') return;
+
+    // check geo index
     if (
-        (stage !== 'IXSCAN' || !indexName) &&
-        (stage2 !== 'IXSCAN' || !indexName2)
-    ) {
-        if (typeof indexNotice === 'function') {
-            indexNotice(explanation?.command);
-            return;
-        }
-        const errMessage = 'cannot perform an index scan for mongodb query with command:';
-        if (indexNotice === 'error') {
-            throw `${errMessage} ${JSON.stringify(explanation?.command)}`;
-        } else console.warn(errMessage, explanation?.command);
+        isGeoIndex(winningPlan) ||
+        (winningPlan?.stage === 'LIMIT' && isGeoIndex(winningPlan.inputStage))
+    ) return;
+
+    // check text index
+    if (
+        isTextIndex(winningPlan) ||
+        (winningPlan?.stage === 'LIMIT' && isTextIndex(winningPlan.inputStage))
+    ) return;
+
+    const isFetchedIndex = obj =>
+        obj?.stage === 'FETCH' &&
+        !obj.filter &&
+        (obj = obj.inputStage) &&
+        obj.stage === 'IXSCAN' &&
+        !!obj.indexName;
+
+    // check direct fetch index
+    if (isFetchedIndex(winningPlan)) return;
+    if (
+        winningPlan?.stage === 'LIMIT' &&
+        !winningPlan.filter &&
+        isFetchedIndex(winningPlan.inputStage)
+    ) return;
+
+    // check empty query index
+    if (isEmptyQuery) {
+        const isEmptyInputStage = obj =>
+            obj?.stage === 'COLLSCAN' &&
+            obj.direction &&
+            Object.keys(obj).length === 2;
+
+        if (
+            isEmptyInputStage(winningPlan)
+            || (
+                winningPlan?.stage === 'LIMIT' &&
+                !winningPlan.filter &&
+                isEmptyInputStage(winningPlan.inputStage)
+            )
+        ) return;
     }
+
+    if (typeof indexNotice === 'function') {
+        indexNotice(explanation?.command);
+        return;
+    }
+    const errMessage = 'cannot perform an index scan for mongodb query with command:';
+    if (indexNotice === 'error') {
+        throw `${errMessage} ${JSON.stringify(explanation?.command)}`;
+    } else console.warn(errMessage, explanation?.command);
 };
 
 const shuffleArray = (n) => {
