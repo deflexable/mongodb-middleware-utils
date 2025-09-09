@@ -51,6 +51,7 @@ const overheadConfig = (dbRef, interceptMap) => {
 
     if (
         indexNotice !== undefined &&
+        typeof indexNotice !== 'function' &&
         !['warn', 'error', 'off'].some(v => indexNotice === v)
     ) throw `expected either a function or any of 'warn', 'error', 'off' for field:"indexNotice" but got ${indexNotice}`;
 
