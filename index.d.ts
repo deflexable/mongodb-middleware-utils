@@ -1,4 +1,4 @@
-import { MongoClient, MongoClientOptions } from 'mongodb';
+import { MongoClient, MongoClientOptions, Document } from 'mongodb';
 
 interface MongoDbInterception {
     /**
@@ -67,7 +67,7 @@ interface InterceptionOption {
      * kindly set this to `undefined` in production environment to avoid unneccessary overhead computations and delays
      * @default undefined
      */
-    indexNotice?: Function | 'warn' | 'error' | 'off' | undefined;
+    indexNotice?: ((explanation: Document) => void) | 'warn' | 'error' | 'off' | undefined;
 }
 
 /**

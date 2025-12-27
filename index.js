@@ -596,8 +596,10 @@ const checkIndex = async (queryRef, indexNotice) => {
         ) return;
     }
 
+    if (winningPlan?.stage === 'EXPRESS_IXSCAN' && winningPlan?.indexName) return;
+
     if (typeof indexNotice === 'function') {
-        indexNotice(explanation?.command);
+        indexNotice(explanation);
         return;
     }
     const errMessage = 'cannot perform an index scan for mongodb query with command:';
