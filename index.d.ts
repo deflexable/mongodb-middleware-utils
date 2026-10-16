@@ -2,10 +2,28 @@ import { MongoClient, MongoClientOptions, Document } from 'mongodb';
 
 interface MongoDbInterception {
     /**
-     * true if you want to create a randomer field `__rdz`
+     * true if you want to create a randomizing field `__rdz`
      */
     random?: boolean;
     fulltext?: string[] | string;
+    /**
+     * Isolates full-text search data from the original collection.
+     *
+     * @remarks
+     * Full-text search arrays can significantly increase document size, adding
+     * unnecessary overhead to queries that do not use them.
+     *
+     * When enabled, this option stores duplicated documents in a separate
+     * collection prefixed with `__fta_`, keeping the full-text search arrays
+     * out of the original collection. Queries that use `$text` are executed
+     * against this separate collection instead.
+     *
+     * This can improve performance when full-text searches are infrequent
+     * but other queries are performed frequently.
+     *
+     * @default false
+     */
+    isolateFullText?: boolean;
     /**
      * true if you want to create `fulltext array field` and `randomizer field` in the background after data has been successfully written instead of intercepting the write operation.
      * 

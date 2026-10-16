@@ -30,7 +30,11 @@ export function generateFulltextIndex(inputString = '') {
 }
 
 if (parentPort)
-    parentPort.on('message', ({ text }) => {
-        const indexes = generateFulltextIndex(text);
-        parentPort.postMessage({ indexes });
+    parentPort.on('message', ({ input, session }) => {
+        try {
+            const indexes = generateFulltextIndex(input.text);
+            parentPort.postMessage([{ indexes }, session]);
+        } catch (error) {
+            parentPort.postMessage([undefined, session, { error: `${error}` }]);
+        }
     });
