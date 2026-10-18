@@ -15,7 +15,7 @@ export class MongoClientHack extends MongoClient {
     constructor({ map, url, tokenizer, indexNotice, options }) {
         super(url, options);
         this.interceptMap = { map, tokenizer, indexNotice };
-        overheadConfig(super.db.bind(this), this.interceptMap);
+        this.overhead = overheadConfig(super.db.bind(this), this.interceptMap);
     }
 
     get db() {
@@ -24,15 +24,18 @@ export class MongoClientHack extends MongoClient {
     __intercepted = true;
 };
 
-export const proxyClient = (interceptMap) => (client) => {
-    if (client.__intercepted) throw `this MongoClient instance was previously intercepted`;
-    overheadConfig(client.db.bind(client), interceptMap);
+export const proxyClient = (interceptMap) =>
+    (client) => {
+        if (client.__intercepted) throw new Error(`this MongoClient instance was previously intercepted`);
+        const listener = overheadConfig(client.db.bind(client), interceptMap);
 
-    const originalDbInstance = client.db.bind(client);
-    client.db = interceptDB(originalDbInstance, interceptMap);
-    client.interceptMap = interceptMap;
-    client.__intercepted = true;
-}
+        const originalDbInstance = client.db.bind(client);
+        client.db = interceptDB(originalDbInstance, interceptMap);
+        client.interceptMap = interceptMap;
+        client.__intercepted = true;
+
+        return listener;
+    }
 
 const ListeningFulltext = {};
 
@@ -40,13 +43,17 @@ const overheadConfig = (dbRef, interceptMap) => {
     const { map, tokenizer, indexNotice } = interceptMap;
 
     if (tokenizer !== undefined && typeof tokenizer !== 'function')
-        throw `expected a function for field:"tokenizer" but got ${tokenizer}`;
+        throw new Error(`expected a function for field:"tokenizer" but got ${tokenizer}`);
 
     if (
         indexNotice !== undefined &&
         typeof indexNotice !== 'function' &&
         !['warn', 'error', 'off'].some(v => indexNotice === v)
-    ) throw `expected either a function or any of 'warn', 'error', 'off' for field:"indexNotice" but got ${indexNotice}`;
+    ) throw new Error(`expected either a function or any of 'warn', 'error', 'off' for field:"indexNotice" but got ${indexNotice}`);
+
+    const listeners = [];
+
+    const PendingOverheapOps = {};
 
     Object.entries(map || {}).forEach(([dbName, colObj]) => {
 
@@ -57,146 +64,274 @@ const overheadConfig = (dbRef, interceptMap) => {
             if (fulltext) {
                 if (Array.isArray(fulltext)) {
                     if (fulltext.some(v => typeof v !== 'string' || v.includes('.') || !v.trim())) {
-                        throw `invalid interception value in ${logRef}, fulltext array must contain a non empty string without "." value but got ${JSON.stringify(fulltext)}`;
+                        throw new Error(`invalid interception value in ${logRef}, 'fulltext' array must contain a non empty string without "." value but got ${JSON.stringify(fulltext)}`);
                     } else if (!fulltext.length) {
-                        throw `invalid interception value in ${logRef}, fulltext array must not be empty`;
+                        throw new Error(`invalid interception value in ${logRef}, 'fulltext' array must not be empty`);
                     } else if (fulltext.filter((v, i, a) => a.indexOf(v) === i).length !== fulltext.length) {
-                        throw `invalid interception value in ${logRef}, fulltext array must not contain duplicate value but got ${fulltext}`;
+                        throw new Error(`invalid interception value in ${logRef}, 'fulltext' array must not contain duplicate value but got ${fulltext}`);
                     }
                 } else if (typeof fulltext !== 'string' || fulltext.includes('.')) {
-                    throw `invalid interception value in ${logRef}, fulltext must either be a string without "." or array but got ${fulltext}`;
+                    throw new Error(`invalid interception value in ${logRef}, 'fulltext' must either be a string without "." or array but got ${fulltext}`);
                 } else if (!fulltext.trim()) {
-                    throw `invalid interception value in ${logRef}, fulltext must not be empty`;
+                    throw new Error(`invalid interception value in ${logRef}, 'fulltext' must not be empty`);
                 }
-            }
+            } else if (isolateFullText)
+                throw new Error(`isolateFullText requires 'fulltext' to be defined`);
 
             if (random !== undefined && typeof random !== 'boolean')
-                throw `invalid interception value in ${logRef}, random should be a boolean value but got ${random}`;
+                throw new Error(`invalid interception value in ${logRef}, random should be a boolean value but got ${random}`);
             if (isolateFullText !== undefined && typeof isolateFullText !== 'boolean')
-                throw `invalid interception value in ${logRef}, isolateFullText should be a boolean value but got ${isolateFullText}`;
+                throw new Error(`invalid interception value in ${logRef}, isolateFullText should be a boolean value but got ${isolateFullText}`);
+
             if (safeOverhead && !overhead)
-                throw `"safeOverhead" should only be true when "overhead" is true`;
+                throw new Error(`"safeOverhead" should only be true when "overhead" is true`);
 
-            if (overhead && ListeningFulltext[logRef] && (fulltext || random)) {
-                ListeningFulltext[logRef] = true;
+            if (overhead && (fulltext || random)) {
+                const startOverhead = () => {
+                    if (ListeningFulltext[logRef]) {
+                        console.warn(`multiple overhead task of ${logRef} were initiated, this may cause data corruption or inconsistency`);
+                    }
+                    ListeningFulltext[logRef] = true;
 
-                const colRef = dbRef(dbName).collection(colName);
-                const getFtColRef = () => dbRef(dbName).collection(FULLTEXT_ARRAY_PREFIX.concat(colName));
-                const stream = colRef.watch();
-                const textArr = fulltext ? Array.isArray(fulltext) ? fulltext : [fulltext] : [];
+                    const textArr = fulltext ? Array.isArray(fulltext) ? fulltext : [fulltext] : [];
 
-                console.log('listening overhead:', colName);
-                stream.on('change', async ({ operationType, fullDocument, updateDescription, documentKey }) => {
-                    if (operationType === 'delete') return;
-                    const { _id } = documentKey;
-                    const thisData = fullDocument || await colRef.findOne({ _id });
-                    if (!thisData) return;
-                    const randomData =
-                        (!random || thisData[RANDOMIZER_FIELD])
-                            ? undefined
-                            : { [RANDOMIZER_FIELD]: Math.random() };
+                    const listenOverhead = (resumeAfter) => {
+                        const getFtColRef = () => dbRef(dbName).collection(FULLTEXT_ARRAY_PREFIX.concat(colName));
+                        const colRef = dbRef(dbName).collection(colName);
+                        const stream = colRef.watch(undefined, { resumeAfter });
 
-                    const expectingText =
-                        fulltext ?
-                            operationType === 'insert'
-                                ? textArr.filter(v => !thisData[`${FULLTEXT_ARRAY_PREFIX}${v}`])
-                                : Object.keys(updateDescription?.updatedFields || {})
-                                    .filter(v => textArr.includes(v))
-                            : [];
+                        console.log('listening overhead:', colName);
 
-                    const getFtIndex = () =>
-                        Promise.all(
-                            expectingText.map(async k => {
-                                const thisText = thisData[k];
-                                const thisToken = typeof thisText === 'string' && (await tokenizer?.(thisText));
-                                return [
-                                    `${FULLTEXT_ARRAY_PREFIX}${k}`,
-                                    await getFulltextArray(tokenizer ? thisToken : thisText)
-                                ];
-                            })
-                        );
+                        stream.on('resumeTokenChanged', (token) => {
+                            resumeAfter = token;
+                        });
 
-                    if (
-                        expectingText.length ||
-                        (random && !thisData[RANDOMIZER_FIELD])
-                    ) {
-                        console.log('overhead working');
-                        if (safeOverhead) {
-                            const freeBytes =
-                                MAX_DOC_SIZE - JSON.stringify({
-                                    ...thisData,
-                                    ...Object.fromEntries(expectingText.map(k => [k]))
-                                }).length;
-                            if (freeBytes > 0) {
-                                const indexes = await getFtIndex();
-                                const limitedIndexes = indexes.map(([k]) => [k, new Set([])]);
-                                let shouldBreak, sizer = 0;
+                        let closure = null;
 
-                                for (let i = 0; i < indexes.length; i++) {
-                                    if (shouldBreak) break;
-                                    for (let x = 0; x < indexes[i][1].length; x++) {
-                                        const element = indexes[i][1][x];
+                        stream.on('error', async () => {
+                            await stream.close();
+                            setTimeout(() => {
+                                if (closure === null)
+                                    closure = listenOverhead(resumeAfter);
+                            }, 7000);
+                        });
 
-                                        if (!((shouldBreak = (sizer += (element.length + 4))) >= freeBytes)) {
-                                            limitedIndexes[i][1].add(element);
-                                        } else break;
+                        stream.on('change', async ({ operationType, fullDocument, updateDescription, documentKey }) => {
+                            const { _id } = documentKey;
+                            const taskKey = `${dbName},${colName},${_id}`;
+
+                            const prevPromise = PendingOverheapOps[taskKey];
+
+                            const thisPromise =
+                                (async () => {
+                                    try {
+                                        if (prevPromise)
+                                            await prevPromise.catch(() => null);
+
+                                        if (operationType === 'delete') {
+                                            if (isolateFullText) return getFtColRef().deleteOne({ _id });
+                                            return;
+                                        }
+
+                                        const thisData = fullDocument || await colRef.findOne({ _id });
+                                        if (!thisData) return;
+                                        const promises = [];
+
+                                        const randomData =
+                                            (!random || thisData[RANDOMIZER_FIELD])
+                                                ? undefined
+                                                : { [RANDOMIZER_FIELD]: Math.random() };
+
+                                        const expectingText =
+                                            fulltext ?
+                                                operationType === 'insert'
+                                                    ? textArr.filter(v => !thisData[`${FULLTEXT_ARRAY_PREFIX}${v}`])
+                                                    : Object.keys(updateDescription?.updatedFields || {})
+                                                        .filter(v => textArr.includes(v))
+                                                : [];
+
+                                        const unsetFields =
+                                            (updateDescription?.removedFields || [])
+                                                .filter(v => textArr.includes(v));
+
+                                        const unsetData =
+                                            unsetFields.length
+                                                ? {
+                                                    $unset:
+                                                        Object.fromEntries(
+                                                            unsetFields.map(v =>
+                                                                [`${FULLTEXT_ARRAY_PREFIX}${v}`, true]
+                                                            )
+                                                        )
+                                                }
+                                                : undefined;
+
+                                        const getFtIndex = () =>
+                                            Promise.all(
+                                                expectingText.map(async k => {
+                                                    const thisText = thisData[k];
+                                                    const thisToken = typeof thisText === 'string' && (await tokenizer?.(thisText));
+                                                    return [
+                                                        `${FULLTEXT_ARRAY_PREFIX}${k}`,
+                                                        await getFulltextArray(tokenizer ? thisToken : thisText)
+                                                    ];
+                                                })
+                                            );
+
+                                        if (
+                                            expectingText.length ||
+                                            (random && !thisData[RANDOMIZER_FIELD])
+                                        ) {
+                                            console.log('overhead working');
+                                            if (safeOverhead) {
+                                                const freeBytes =
+                                                    MAX_DOC_SIZE - JSON.stringify({
+                                                        ...thisData,
+                                                        ...Object.fromEntries(expectingText.map(k => [k]))
+                                                    }).length;
+                                                if (freeBytes > 0) {
+                                                    const indexes = await getFtIndex();
+                                                    const limitedIndexes = indexes.map(([k]) => [k, new Set([])]);
+                                                    let shouldBreak, sizer = 0;
+
+                                                    for (let i = 0; i < indexes.length; i++) {
+                                                        if (shouldBreak) break;
+                                                        for (let x = 0; x < indexes[i][1].length; x++) {
+                                                            const element = indexes[i][1][x];
+
+                                                            if (!((shouldBreak = (sizer += (element.length + 4))) >= freeBytes)) {
+                                                                limitedIndexes[i][1].add(element);
+                                                            } else break;
+                                                        }
+                                                    }
+
+                                                    const ftData =
+                                                        limitedIndexes.length
+                                                            ? Object.fromEntries(
+                                                                limitedIndexes
+                                                                    .map(([k, v]) => [k, [...v]])
+                                                                    .filter(v => v[1].length)
+                                                            )
+                                                            : undefined;
+
+                                                    if (randomData || (!isolateFullText && ftData))
+                                                        promises.push(
+                                                            colRef.updateOne({ _id }, {
+                                                                ...unsetData,
+                                                                $set: {
+                                                                    ...isolateFullText ? undefined : ftData,
+                                                                    ...randomData
+                                                                }
+                                                            })
+                                                        );
+
+                                                    if (randomData || (isolateFullText && ftData))
+                                                        promises.push(
+                                                            getFtColRef().updateOne({ _id }, {
+                                                                ...unsetData,
+                                                                $set: {
+                                                                    ...isolateFullText ? ftData : undefined,
+                                                                    ...randomData
+                                                                }
+                                                            })
+                                                        );
+                                                } else if (randomData) {
+                                                    promises.push(colRef.updateOne({ _id }, { ...unsetData, $set: randomData }));
+                                                    if (isolateFullText)
+                                                        promises.push(getFtColRef().updateOne({ _id }, { ...unsetData, $set: randomData }));
+                                                }
+                                            } else {
+                                                const indexes = await getFtIndex();
+                                                const ftData = indexes.length ? Object.fromEntries(indexes) : undefined;
+
+                                                if (randomData || (!isolateFullText && ftData))
+                                                    promises.push(
+                                                        colRef.updateOne({ _id }, {
+                                                            ...unsetData,
+                                                            $set: {
+                                                                ...isolateFullText ? undefined : ftData,
+                                                                ...randomData
+                                                            }
+                                                        })
+                                                    );
+
+                                                if (randomData || (isolateFullText && ftData))
+                                                    promises.push(
+                                                        getFtColRef().updateOne({ _id }, {
+                                                            ...unsetData,
+                                                            $set: {
+                                                                ...isolateFullText ? ftData : undefined,
+                                                                ...randomData
+                                                            }
+                                                        })
+                                                    );
+                                            }
+                                        } else if (unsetData) {
+                                            promises.push(
+                                                isolateFullText
+                                                    ? getFtColRef().updateOne({ _id }, unsetData)
+                                                    : colRef.updateOne({ _id }, unsetData)
+                                            );
+                                        }
+
+                                        if (promises.length) await Promise.all(promises);
+                                    } catch (error) {
+                                        console.error('overhead err:', error);
+                                        throw error;
                                     }
-                                }
+                                })();
 
-                                const ftData =
-                                    limitedIndexes.length
-                                        ? Object.fromEntries(
-                                            limitedIndexes
-                                                .map(([k, v]) => [k, [...v]])
-                                                .filter(v => v[1].length)
-                                        )
-                                        : undefined;
+                            PendingOverheapOps[taskKey] = thisPromise;
 
-                                if (randomData || (!isolateFullText && ftData))
-                                    colRef.updateOne({ _id }, {
-                                        $set: {
-                                            ...isolateFullText ? undefined : ftData,
-                                            ...randomData
-                                        }
-                                    });
+                            thisPromise.finally(() => {
+                                if (PendingOverheapOps[taskKey] === thisPromise)
+                                    delete PendingOverheapOps[taskKey];
+                            });
 
-                                if (randomData || (isolateFullText && ftData))
-                                    getFtColRef().updateOne({ _id }, {
-                                        $set: {
-                                            ...isolateFullText ? ftData : undefined,
-                                            ...randomData
-                                        }
-                                    });
-                            } else if (randomData) {
-                                colRef.updateOne({ _id }, { $set: randomData });
-                                if (isolateFullText)
-                                    getFtColRef().updateOne({ _id }, { $set: randomData });
+                            return thisPromise;
+                        });
+
+                        return () => {
+                            const thisClosure = closure;
+                            closure = undefined;
+
+                            if (thisClosure === null) {
+                                return stream.close();
+                            } else if (typeof thisClosure === 'function') {
+                                return thisClosure();
                             }
-                        } else {
-                            const indexes = await getFtIndex();
-                            const ftData = indexes.length ? Object.fromEntries(indexes) : undefined;
-
-                            if (randomData || (!isolateFullText && ftData))
-                                colRef.updateOne({ _id }, {
-                                    $set: {
-                                        ...isolateFullText ? undefined : ftData,
-                                        ...randomData
-                                    }
-                                });
-
-                            if (randomData || (isolateFullText && ftData))
-                                getFtColRef().updateOne({ _id }, {
-                                    $set: {
-                                        ...isolateFullText ? ftData : undefined,
-                                        ...randomData
-                                    }
-                                });
                         }
                     }
-                });
+
+                    return listenOverhead();
+                }
+
+                listeners.push([startOverhead]);
             }
         });
     });
+
+    let hasStart;
+
+    return {
+        start: () => {
+            if (hasStart) return;
+            hasStart = true;
+            listeners.forEach(v => {
+                v[1] = v[0]();
+            });
+        },
+        end: () => {
+            if (!hasStart) return;
+            hasStart = false;
+            listeners.forEach(v => {
+                if (v[1]) {
+                    v[1]();
+                    v[1] = undefined;
+                }
+            });
+        }
+    }
 }
 
 /**
@@ -240,10 +375,10 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     const searchField = Array.isArray(sf) ? sf : [sf];
 
                     if (searchField.some((v, i, a) => a.indexOf(v) !== i))
-                        throw `$field must not contain duplicate values`;
+                        throw new Error(`$field must not contain duplicate values`);
 
                     if (!searchField.length)
-                        throw `$field or $fulltext cannot be empty in query:${tip}`;
+                        throw new Error(`$field or $fulltext cannot be empty in query:${tip}`);
 
                     const searchFilter =
                         searchField.map(field => ({
@@ -270,21 +405,19 @@ const interceptDB = (dbRef, interceptMap) => function () {
             }
 
             const cleanUpResult = (res) => {
-                const hits =
-                    (Array.isArray(res) ? res : [res]).map(doc => {
+                (Array.isArray(res) ? res : [res])
+                    .forEach(doc => {
                         if (!doc) return doc;
-                        const n = { ...doc };
 
-                        Object.keys(doc).forEach(k => {
+                        for (const field in doc) {
                             if (
-                                k.startsWith(FULLTEXT_ARRAY_PREFIX) ||
-                                k === RANDOMIZER_FIELD
-                            ) delete n[k];
-                        });
-                        return n;
+                                field.startsWith(FULLTEXT_ARRAY_PREFIX) ||
+                                field === RANDOMIZER_FIELD
+                            ) delete doc[field];
+                        }
                     });
 
-                return Array.isArray(res) ? hits : hits[0];
+                return res;
             };
 
             const injectWriteData = async (doc) => {
@@ -345,7 +478,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                 const mainPromise = colInstance.insertOne(results[0], arguments[1]);
 
                 if (results.length === 2)
-                    await ftColInstance.insertOne(results[1], arguments[1]).catch(() => null);
+                    await ftColInstance.insertOne(results[1], arguments[1]);
 
                 return mainPromise;
             };
@@ -357,9 +490,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     colInstance.insertMany(results.map(v => v[0]), arguments[1]);
 
                 if (hasIsolationWrite)
-                    await ftColInstance
-                        .insertMany(results.map(v => v[1]), arguments[1])
-                        .catch(() => null);
+                    await ftColInstance.insertMany(results.map(v => v[1]), arguments[1]);
 
                 return mainPromise;
             };
@@ -382,7 +513,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                         colInstance[op](filterObj, results[0], arguments[2]);
 
                     if (results.length === 2)
-                        await ftColInstance[op](filterObj, results[1], arguments[2]).catch(() => null);
+                        await ftColInstance[op](filterObj, results[1], arguments[2]);
 
                     return mainPromise;
                 };
@@ -408,6 +539,24 @@ const interceptDB = (dbRef, interceptMap) => function () {
                 return mainPromise;
             };
 
+            if (hasIsolationWrite)
+                thisCol.deleteOne = async function () {
+                    const mainPromise = colInstance.deleteOne(...arguments);
+
+                    await ftColInstance.deleteOne(...arguments);
+
+                    return mainPromise;
+                };
+
+            if (hasIsolationWrite)
+                thisCol.deleteMany = async function () {
+                    const mainPromise = colInstance.deleteMany(...arguments);
+
+                    await ftColInstance.deleteMany(...arguments);
+
+                    return mainPromise;
+                };
+
             thisCol.bulkWrite = async function () {
                 const results =
                     await Promise.all(arguments[0].map(async v => {
@@ -415,7 +564,10 @@ const interceptDB = (dbRef, interceptMap) => function () {
 
                         await Promise.all(Object.entries(v).map(async ([key, obj]) => {
                             const { filter, hasSearch } = tipOff(obj.filter);
-                            const arrayFilters = obj.arrayFilters.map(v => tipOff(v).filter);
+                            const arrayFilters =
+                                obj.arrayFilters
+                                    ? obj.arrayFilters.map(v => tipOff(v).filter)
+                                    : undefined;
 
                             if (key !== 'insertOne' && notifyIndex && !arrayFilters)
                                 await checkIndex(
@@ -458,7 +610,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                 const mainPromise = colInstance.bulkWrite(results.map(v => v[0]), arguments[1]);
 
                 if (hasIsolationWrite)
-                    ftColInstance.bulkWrite(results.map(v => v[1]), arguments[1]);
+                    await ftColInstance.bulkWrite(results.map(v => v[1]), arguments[1]);
 
                 return mainPromise;
             }
@@ -495,15 +647,40 @@ const interceptDB = (dbRef, interceptMap) => function () {
             thisCol.watch = function () {
                 const streamInstance = colInstance.watch(...arguments);
                 const mutatedStream = {};
+                const callbackMap = new Map();
 
-                const listenerMap = {};
+                const onceMethods = new Set(['once', 'prependOnceListener']);
+
+                const cleanListener = (callback, reg, method) => {
+                    const registrations = callbackMap.get(callback);
+
+                    if (registrations) {
+                        const dex =
+                            reg === undefined
+                                ? registrations.length
+                                    ? registrations.length - 1
+                                    : -1
+                                : registrations.findIndex(v => v === reg);
+
+                        if (dex !== -1) {
+                            if (method) streamInstance[method]('change', registrations[dex]);
+                            registrations.splice(dex, 1);
+                        }
+
+                        if (!registrations.length) {
+                            callbackMap.delete(callback);
+                        }
+                    }
+                }
 
                 ['on', 'once', 'prependListener', 'addListener', 'prependOnceListener'].forEach(method => {
                     mutatedStream[method] = (event, callback) => {
 
                         if (event === 'change') {
-                            const processId = `${Math.random()}`;
-                            listenerMap[processId] = s => {
+                            const injectCallback = s => {
+                                if (onceMethods.has(method))
+                                    cleanListener(callback, injectCallback);
+
                                 const h = s;
                                 if (h.fullDocument)
                                     h.fullDocument = cleanUpResult(h.fullDocument);
@@ -512,15 +689,14 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                 if (h.updateDescription?.updatedFields)
                                     h.updateDescription.updatedFields = cleanUpResult(h.updateDescription.updatedFields)
 
-                                callback?.(h);
+                                return callback?.(h);
                             }
 
-                            if (!callback.prototype) callback.prototype = {};
-                            if (!callback.prototype.__cloneMongodbListener)
-                                callback.prototype.__cloneMongodbListener = [];
+                            if (callbackMap.has(callback)) {
+                                callbackMap.get(callback).push(injectCallback);
+                            } else callbackMap.set(callback, [injectCallback]);
 
-                            callback.prototype.__cloneMongodbListener.push(processId);
-                            return streamInstance[method]('change', listenerMap[processId]);
+                            return streamInstance[method]('change', injectCallback);
                         } else return streamInstance[method](event, callback);
                     }
                 });
@@ -528,32 +704,42 @@ const interceptDB = (dbRef, interceptMap) => function () {
                 ['off', 'removeListener'].forEach(method => {
                     mutatedStream[method] = (event, callback) => {
                         if (event === 'change') {
-                            const processIdList = callback.prototype?.__cloneMongodbListener;
-
-                            if (processIdList) {
-                                processIdList.forEach(processId => {
-                                    streamInstance[method](event, listenerMap[processId]);
-                                    if (listenerMap[processId]) delete listenerMap[processId];
-                                });
-                                delete callback.prototype.__cloneMongodbListener;
-                            }
+                            cleanListener(callback, undefined, method);
                         } else streamInstance[method](event, method);
+                        return mutatedProxy;
                     }
                 });
 
-                return new Proxy({}, {
-                    get(_, n) {
-                        if (mutatedStream[n]) return mutatedStream[n];
-                        if (typeof streamInstance[n] === 'function')
-                            return streamInstance[n].bind(streamInstance);
-                        return streamInstance[n];
-                    },
-                    set(_, n, v) {
-                        if (mutatedStream[n]) mutatedStream[n] = v;
-                        else streamInstance[n] = v;
-                        return true;
+                mutatedStream.removeAllListeners = (event) => {
+                    streamInstance.removeAllListeners(event);
+
+                    if (event === undefined || event === 'change') {
+                        callbackMap.clear();
                     }
+
+                    return mutatedProxy;
+                }
+
+                streamInstance.once('close', () => {
+                    callbackMap.clear();
                 });
+
+                const mutatedProxy =
+                    new Proxy({}, {
+                        get(_, n) {
+                            if (mutatedStream[n]) return mutatedStream[n];
+                            if (typeof streamInstance[n] === 'function')
+                                return streamInstance[n].bind(streamInstance);
+                            return streamInstance[n];
+                        },
+                        set(_, n, v) {
+                            if (mutatedStream[n]) mutatedStream[n] = v;
+                            else streamInstance[n] = v;
+                            return true;
+                        }
+                    });
+
+                return mutatedProxy;
             }
 
             thisCol.aggregate = function () {
@@ -585,7 +771,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                 const prevToArray = aggregateInstance.toArray.bind(aggregateInstance);
 
                 aggregateInstance.toArray = async () => {
-                    if (willRandomize) randomPromise();
+                    if (willRandomize) return randomPromise();
                     return cleanUpResult(await prevToArray());
                 }
 
@@ -761,7 +947,9 @@ const checkIndex = async (queryRef, indexNotice) => {
                 .some(([k, v]) => {
                     if (!['find', 'limit', '$db'].includes(k)) {
                         if (k === 'filter') {
-                            const nodes = Object.keys(v || {}).filter(v => v !== '_id');
+                            const nodes =
+                                Object.keys(v || {})
+                                    .filter(v => v !== '_id');
 
                             if (nodes.length) return true;
                         } else return true;
@@ -778,7 +966,7 @@ const checkIndex = async (queryRef, indexNotice) => {
 
     const errMessage = 'cannot perform an index scan for mongodb query with command:';
     if (indexNotice === 'error') {
-        throw `${errMessage} ${JSON.stringify(explanation?.command)}`;
+        throw new Error(`${errMessage} ${JSON.stringify(explanation?.command)}`);
     } else {
         console.warn(errMessage, explanation?.command);
     }
@@ -812,18 +1000,24 @@ const buildInterception = async (doc, { fulltext, random, overhead, tokenizer })
 
     if (fulltext) {
         fulltext = (Array.isArray(fulltext) ? fulltext : [fulltext]);
-        await Promise.all(fulltext.map(async field => {
-            const t = doc[field];
+        await Promise.all(
+            fulltext.map(async field => {
+                const t = doc[field];
 
-            if (
-                typeof t === 'string' &&
-                t.trim() &&
-                !doc[`${FULLTEXT_ARRAY_PREFIX}${field}`]
-            ) {
-                const thisToken = typeof t === 'string' && await tokenizer?.(t);
-                newDoc[`${FULLTEXT_ARRAY_PREFIX}${field}`] = await getFulltextArray(tokenizer ? thisToken : t);
-            }
-        }));
+                if (
+                    typeof t === 'string' &&
+                    t.trim() &&
+                    !doc[`${FULLTEXT_ARRAY_PREFIX}${field}`]
+                ) {
+                    const thisToken =
+                        typeof t === 'string' &&
+                        await tokenizer?.(t);
+
+                    newDoc[`${FULLTEXT_ARRAY_PREFIX}${field}`] =
+                        await getFulltextArray(tokenizer ? thisToken : t);
+                }
+            })
+        );
     }
     if (random && !doc[RANDOMIZER_FIELD])
         newDoc[RANDOMIZER_FIELD] = Math.random();
@@ -846,9 +1040,15 @@ export const getFulltextArray = async (t) => {
             ? await Promise.all(textSplits.map(text => addTask({ text })))
             : textSplits.map(text => ({ indexes: generateFulltextIndex(text) }));
 
-    return [
-        ...new Set(chunks.map(v => v.indexes).flat())
-    ];
+    const indexes = new Set();
+
+    for (const chunk of chunks) {
+        for (const token of chunk.indexes) {
+            indexes.add(token);
+        }
+    }
+
+    return [...indexes];
 };
 
 const chunkSize = 9 * 300; // max words

@@ -88,6 +88,18 @@ interface InterceptionOption {
     indexNotice?: ((explanation: Document) => void) | 'warn' | 'error' | 'off' | undefined;
 }
 
+interface OverheadStreamResult {
+    /**
+     * starts listening to change stream for mutating data
+     */
+    start: () => void;
+
+    /**
+     * stops listening to change stream for mutating data
+     */
+    end: () => void;
+}
+
 /**
  * initialize MongoClientHack Instance
  * 
@@ -122,6 +134,8 @@ interface InterceptionOption {
  */
 export class MongoClientHack extends MongoClient {
     constructor(config: MongoClientHackConfig);
+
+    overhead: OverheadStreamResult;
 }
 
 /**
@@ -153,7 +167,7 @@ export class MongoClientHack extends MongoClient {
  *   mongoServer.connect();
  * ```
  */
-export function proxyClient(config: InterceptionOption): (client: MongoClient) => void;
+export function proxyClient(config: InterceptionOption): (client: MongoClient) => OverheadStreamResult;
 export function getFulltextArray(text: string): Promise<string[]>;
 
 export const FULLTEXT_ARRAY_PREFIX: '__fta_';

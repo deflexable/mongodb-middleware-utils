@@ -5,18 +5,18 @@ import { availableParallelism } from 'os';
 import LimitTasks from 'limit-task';
 
 let currentTask = -1;
-const e2e_engines = [];
+const worker_list = [];
 
 const MAX_WORKERS = Math.max(availableParallelism(), 7);
 
 export const addTask = (input) => {
-    if (++currentTask >= e2e_engines.length) {
-        if (e2e_engines.length < MAX_WORKERS) {
+    if (++currentTask >= worker_list.length) {
+        if (worker_list.length < MAX_WORKERS) {
             // spawn new engine on demand
-            e2e_engines.push(spawnWorker());
+            worker_list.push(spawnWorker());
         } else currentTask = 0;
     }
-    return e2e_engines[currentTask](input);
+    return worker_list[currentTask](input);
 }
 
 const getDirname = () => {
@@ -42,9 +42,32 @@ const spawnWorker = () => {
         delete resolution[session];
     });
 
+    const rejectPendingTasks = error => {
+        const pendTasks = Object.entries(resolution);
+        for (const [session, [_, reject]] of pendTasks) {
+            delete resolution[session];
+            reject(error);
+        }
+
+        if (pendTasks.length) setTimeout(rejectPendingTasks, 90);
+
+        for (let i = 0; i < worker_list.length; i++) {
+            const thatCallback = worker_list[i];
+
+            if (thatCallback === callback) {
+                worker_list.splice(i, 1);
+                currentTask = 0;
+                break;
+            }
+        }
+    };
+
+    worker.on('error', rejectPendingTasks);
+    worker.on('exit', rejectPendingTasks);
+
     const queue = LimitTasks(9);
 
-    return (input) =>
+    const callback = (input) =>
         queue(() =>
             new Promise((resolve, reject) => {
                 const session = `${++ite}`;
@@ -53,4 +76,6 @@ const spawnWorker = () => {
                 worker.postMessage({ input, session });
             })
         );
+
+    return callback;
 };
