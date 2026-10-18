@@ -28,6 +28,9 @@ interface MongoDbInterception {
      * true if you want to create `fulltext array field` and `randomizer field` in the background after data has been successfully written instead of intercepting the write operation.
      * 
      * This basically listen for data changes in the background.
+     * 
+     * you have to call `start()` to start mongodb change stream
+     * 
      * @default false
      */
     overhead?: boolean;

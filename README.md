@@ -41,7 +41,8 @@ const mongoServer = new MongoClientHack({
       my_collection_name: {
         // name of collection you want to intercept
         random: true,
-        fulltext: ["name", "des"],
+        // fields you want to enable fulltext search for
+        fulltext: ["name", "des"]
       },
     },
     another_database_name: {
@@ -53,15 +54,17 @@ const mongoServer = new MongoClientHack({
     // you can have as many map as needed
     ...otherMapping,
   },
-  tokenizer: (text) => string, // <--- handle text tokenization here
+  tokenizer: (text) => string, // <--- optionally handle text tokenization here
   url: "mongodb://127.0.0.1:27017",
+  // MongoClientHack extends MongoClient so you can include also options
   options: {
-    useUnifiedTopology: true,
-    ...otherProps,
-  },
+      ...props
+  }
 });
+// connect
+mongoServer.connect();
 
-// using MongoClient
+// or if using your own MongoClient
 const mongoServer = new MongoClient("mongodb://127.0.0.1:27017");
 
 proxyClient({
@@ -85,10 +88,10 @@ proxyClient({
   },
   tokenizer: (text) => string, // <--- handle text tokenization here
 })(mongoServer);
-
 // connect
 mongoServer.connect();
 
+// inserting test data
 const db = mongoServer.db("my_database_name");
 
 // insert document
@@ -103,7 +106,8 @@ await db.collection("my_collection_name").insertOne({
 ### Searching Text
 
 ```js
-const nameOrDesFieldSearch = await db
+const nameOrDesFieldSearch = 
+await db
   .collection()
   .find({ $text: { $search: "sit amet consec" } })
   .toArray();
@@ -119,7 +123,8 @@ console.log("searchResult: ", nameOrDesFieldSearch);
 
 // search single field
 
-const nameFieldSearch = await db
+const nameFieldSearch = 
+await db
   .collection()
   .find({ $text: { $search: "onaba", $field: "name" } })
   .toArray();
@@ -139,10 +144,12 @@ console.log("searchResult: ", nameFieldSearch);
 ```js
 // make sure you followed this process when querying random document ($sample at the first pipeline and $match at the second one)
 // or else it fallback to using the native caller
-const searchRes = await db.collection('my_collection_name').aggregate([
-    { $sample: { $size: 5 } }
-    { $match: { } }
-]).limit(1).toArray();
+const searchRes = 
+    await db.collection('my_collection_name')
+          .aggregate([
+              { $sample: { $size: 5 } }
+              { $match: { } }
+          ]).limit(1).toArray();
 ```
 
 ## Document transformation
@@ -176,7 +183,7 @@ All field value starting with `__fta_` or equals to `__rdz` are removed for read
 
 - As the maximum size of a document in mongodb is 16mb, Avoid saving more than 37,000 bytes of characters for fulltext field. this 37,000 chars can produce approximately 301,391 item of strings in an array weighing 11mb in size.
 
-- Avoid nesting field you wants to enable for fulltext search, always place it at the first object iteration stage
+- Avoid nesting field you wants to enable for fulltext search, always place it at the shallow stage
 
 - Avoid nesting $text, always place it at the first object iteration stage
 
