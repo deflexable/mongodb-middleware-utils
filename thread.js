@@ -30,6 +30,7 @@ const spawnWorker = () => {
     const resolution = {};
     let ite = 0;
     const worker = new Worker(`${__dirnamePath}/worker.js`);
+    let closureError;
 
     // Receive the result from the worker
     worker.on('message', function (event) {
@@ -46,7 +47,7 @@ const spawnWorker = () => {
         const pendTasks = Object.entries(resolution);
         for (const [session, [_, reject]] of pendTasks) {
             delete resolution[session];
-            reject(error);
+            reject(closureError?.error);
         }
 
         if (pendTasks.length) setTimeout(rejectPendingTasks, 90);
@@ -62,14 +63,24 @@ const spawnWorker = () => {
         }
     };
 
-    worker.on('error', rejectPendingTasks);
-    worker.on('exit', rejectPendingTasks);
+    worker.on('error', err => {
+        closureError = { error: err };
+        rejectPendingTasks(err);
+    });
+    worker.on('exit', () => {
+        if (!closureError) closureError = {};
+        rejectPendingTasks();
+    });
 
     const queue = LimitTasks(9);
 
     const callback = (input) =>
         queue(() =>
             new Promise((resolve, reject) => {
+                if (closureError) {
+                    reject(closureError.error);
+                    return;
+                }
                 const session = `${++ite}`;
 
                 resolution[session] = [resolve, reject];

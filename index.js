@@ -34,6 +34,8 @@ export const proxyClient = (interceptMap) =>
         client.interceptMap = interceptMap;
         client.__intercepted = true;
 
+        client.overhead = listener;
+
         return listener;
     }
 
@@ -144,15 +146,17 @@ const overheadConfig = (dbRef, interceptMap) => {
 
                                         const expectingText =
                                             fulltext ?
-                                                operationType === 'insert'
-                                                    ? textArr.filter(v => !thisData[`${FULLTEXT_ARRAY_PREFIX}${v}`])
+                                                ['insert', 'replace'].includes(operationType)
+                                                    ? textArr.filter(v => thisData[v])
                                                     : Object.keys(updateDescription?.updatedFields || {})
                                                         .filter(v => textArr.includes(v))
                                                 : [];
 
                                         const unsetFields =
-                                            (updateDescription?.removedFields || [])
-                                                .filter(v => textArr.includes(v));
+                                            operationType === 'replace'
+                                                ? textArr.filter(v => !thisData[v])
+                                                : (updateDescription?.removedFields || [])
+                                                    .filter(v => textArr.includes(v));
 
                                         const unsetData =
                                             unsetFields.length
@@ -303,7 +307,14 @@ const overheadConfig = (dbRef, interceptMap) => {
                         }
                     }
 
-                    return listenOverhead();
+                    const stopper = listenOverhead();
+
+                    return () => {
+                        if (ListeningFulltext[logRef])
+                            delete ListeningFulltext[logRef];
+
+                        return stopper();
+                    }
                 }
 
                 listeners.push([startOverhead]);
@@ -583,7 +594,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                             const o = {
                                 ...obj,
                                 ...obj.filter ? { filter } : {},
-                                ...obj.arrayFilters ? {} : { arrayFilters: arrayFilters }
+                                ...arrayFilters ? {} : { arrayFilters }
                             };
 
                             b[0][key] = {
@@ -696,8 +707,10 @@ const interceptDB = (dbRef, interceptMap) => function () {
                                 callbackMap.get(callback).push(injectCallback);
                             } else callbackMap.set(callback, [injectCallback]);
 
-                            return streamInstance[method]('change', injectCallback);
-                        } else return streamInstance[method](event, callback);
+                            streamInstance[method]('change', injectCallback);
+                        } else streamInstance[method](event, callback);
+
+                        return mutatedProxy;
                     }
                 });
 
@@ -705,7 +718,7 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     mutatedStream[method] = (event, callback) => {
                         if (event === 'change') {
                             cleanListener(callback, undefined, method);
-                        } else streamInstance[method](event, method);
+                        } else streamInstance[method](event, callback);
                         return mutatedProxy;
                     }
                 });
@@ -799,17 +812,17 @@ const interceptDB = (dbRef, interceptMap) => function () {
                     } else {
                         const sizing = size + 0,
                             spacing = (max - min) / sizing,
-                            randomOffset = [];
+                            randomSections = [];
 
                         let sectionOffset = min;
 
                         Array(sizing).fill().forEach(() => {
-                            randomOffset.push(getRandomNumber(sectionOffset += spacing, sectionOffset));
+                            randomSections.push(getRandomNumber(sectionOffset += spacing, sectionOffset));
                         });
 
                         const offsetDoc =
                             await Promise.all(
-                                randomOffset.map(offset =>
+                                randomSections.map(offset =>
                                     colRef.find({
                                         ...filterObj,
                                         [RANDOMIZER_FIELD]: { $gte: offset }
